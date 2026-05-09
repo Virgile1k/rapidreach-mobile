@@ -5,12 +5,12 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        /** Emergency — SOS, critical alerts */
+        
         emergency: '#E53935',
         trust: '#1565C0',
         success: '#2E7D32',
         warning: '#F9A825',
-        /** Splash / header navy */
+        
         brand: {
           navy: '#070D18',
           slate: '#0c1526',

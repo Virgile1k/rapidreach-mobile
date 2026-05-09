@@ -1,16 +1,37 @@
 #!/usr/bin/env python3
-"""Generate Android mipmap and iOS AppIcon PNGs from assets/hero-telkom-bg.jpg (center square crop)."""
+"""Generate Android mipmaps and iOS AppIcon PNGs matching drawable/ic_splash_emblem.xml."""
 
 from __future__ import annotations
 
 import json
+import math
 import os
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "assets" / "hero-telkom-bg.jpg"
+
+# Same as android/app/src/main/res/drawable/ic_splash_emblem.xml (viewport 120×120)
+_VIEWBOX = 120.0
+_RED = (229, 57, 53, 255)  # #E53935
+_WHITE = (255, 255, 255, 255)
+
+# White plus path as closed polygon (matches pathData "M54,38h12v16h16v12..." )
+_PLUS_POINTS = [
+    (54, 38),
+    (66, 38),
+    (66, 54),
+    (82, 54),
+    (82, 66),
+    (66, 66),
+    (66, 82),
+    (54, 82),
+    (54, 66),
+    (38, 66),
+    (38, 54),
+    (54, 54),
+]
 
 ANDROID_SIZES = {
     "mipmap-mdpi": 48,
@@ -20,7 +41,6 @@ ANDROID_SIZES = {
     "mipmap-xxxhdpi": 192,
 }
 
-# (filename, pixel side, Contents.json entry without filename)
 IOS_ICONS: list[tuple[str, int, dict]] = [
     ("AppIcon-20@2x.png", 40, {"size": "20x20", "idiom": "iphone", "scale": "2x"}),
     ("AppIcon-20@3x.png", 60, {"size": "20x20", "idiom": "iphone", "scale": "3x"}),
@@ -38,32 +58,41 @@ IOS_ICONS: list[tuple[str, int, dict]] = [
 ]
 
 
-def crop_square(im: Image.Image) -> Image.Image:
-    w, h = im.size
-    side = min(w, h)
-    left = (w - side) // 2
-    top = (h - side) // 2
-    return im.crop((left, top, left + side, top + side))
+def render_emblem(px: int, supersample: int = 2) -> Image.Image:
+    """Raster matching ic_splash_emblem: red circle + white plus."""
+    ssuper = max(1, supersample)
+    w = px * ssuper
+    scale = w / _VIEWBOX
+
+    im = Image.new("RGBA", (w, w), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(im)
+
+    cx, cy, r = 60.0 * scale, 60.0 * scale, 44.0 * scale
+    bbox = (cx - r, cy - r, cx + r, cy + r)
+    draw.ellipse(bbox, fill=_RED)
+
+    poly = [(x * scale, y * scale) for x, y in _PLUS_POINTS]
+    draw.polygon(poly, fill=_WHITE)
+
+    if ssuper > 1:
+        im = im.resize((px, px), Image.Resampling.LANCZOS)
+    return im.convert("RGBA")
 
 
 def main() -> None:
-    im = Image.open(SRC).convert("RGB")
-    square = crop_square(im)
-
     res = ROOT / "android" / "app" / "src" / "main" / "res"
     for folder, px in ANDROID_SIZES.items():
         out_dir = res / folder
         out_dir.mkdir(parents=True, exist_ok=True)
-        img = square.resize((px, px), Image.Resampling.LANCZOS)
+        img = render_emblem(px)
         for name in ("ic_launcher.png", "ic_launcher_round.png"):
             img.save(out_dir / name, "PNG")
 
-    appicon = (
-        ROOT / "ios" / "RapidReach" / "Images.xcassets" / "AppIcon.appiconset"
-    )
+    appicon = ROOT / "ios" / "RapidReach" / "Images.xcassets" / "AppIcon.appiconset"
+    appicon.mkdir(parents=True, exist_ok=True)
     images: list[dict] = []
     for filename, px, entry in IOS_ICONS:
-        img = square.resize((px, px), Image.Resampling.LANCZOS)
+        img = render_emblem(px)
         dest = appicon / filename
         img.save(dest, "PNG")
         row = {**entry, "filename": filename}
@@ -74,7 +103,31 @@ def main() -> None:
         json.dumps(contents, indent=2) + "\n", encoding="utf-8"
     )
 
-    print("Wrote Android mipmaps and iOS AppIcon set.")
+    print("Wrote Android mipmaps and iOS AppIcon set (splash emblem: red circle + white plus).")
+
+    emblem_dir = (
+        ROOT / "ios" / "RapidReach" / "Images.xcassets" / "SplashEmblem.imageset"
+    )
+    emblem_dir.mkdir(parents=True, exist_ok=True)
+    render_emblem(256).save(emblem_dir / "splash-emblem.png", "PNG")
+    (emblem_dir / "Contents.json").write_text(
+        json.dumps(
+            {
+                "images": [
+                    {
+                        "filename": "splash-emblem.png",
+                        "idiom": "universal",
+                        "scale": "1x",
+                    }
+                ],
+                "info": {"author": "xcode", "version": 1},
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    print("Wrote ios/.../SplashEmblem.imageset for LaunchScreen.")
 
 
 if __name__ == "__main__":

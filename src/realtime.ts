@@ -31,7 +31,7 @@ async function decodeWsPayloadAsync(data: unknown): Promise<string> {
   return "";
 }
 
-/** Raw STOMP 1.2 over WebSocket (same wire protocol as rapidreach-fn). Handles heart-beats, fragmentation, resume. */
+
 export function subscribeResponderAlerts(
   responderId: string,
   organizationId: string | null,
@@ -124,7 +124,7 @@ export function subscribeResponderAlerts(
       const wsScheme = httpUrl.protocol === "https:" ? "wss:" : "ws:";
       const basePath =
         httpUrl.pathname && httpUrl.pathname !== "/" ? httpUrl.pathname.replace(/\/$/, "") : "";
-      const wsUrl = `${wsScheme}//${httpUrl.host}${basePath}/ws`;
+      const wsUrl = `${wsScheme}
       ws = new WebSocket(wsUrl, ["v12.stomp"]);
       ws.binaryType = "arraybuffer";
 
@@ -139,7 +139,7 @@ export function subscribeResponderAlerts(
             let chunk = await decodeWsPayloadAsync(event.data);
             if (!chunk.length) return;
 
-            // Lone STOMP heart-beat from broker
+            
             if (chunk === "\n") {
               ws?.send("\n");
               return;
@@ -161,7 +161,7 @@ export function subscribeResponderAlerts(
         try {
           ws?.close();
         } catch {
-          // noop
+          
         }
       };
 
@@ -178,13 +178,13 @@ export function subscribeResponderAlerts(
     const prev = appStatePrev;
     appStatePrev = next;
     if (stopped || next !== "active") return;
-    // Only cycle the socket when returning from background/inactive — not on cold start (unknown→active)
-    // or duplicate "active" while already foregrounded.
+    
+    
     if (prev !== "background" && prev !== "inactive") return;
     try {
       ws?.close();
     } catch {
-      // noop
+      
     }
   };
 
@@ -199,7 +199,7 @@ export function subscribeResponderAlerts(
     try {
       ws?.close();
     } catch {
-      // noop
+      
     }
     ws = null;
   };

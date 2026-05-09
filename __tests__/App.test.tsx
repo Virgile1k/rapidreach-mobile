@@ -20,6 +20,21 @@ jest.mock("@react-native-community/geolocation", () => ({
   },
 }));
 
+jest.mock("@maplibre/maplibre-react-native", () => {
+  const React = require("react");
+  const { View } = require("react-native");
+  const MockMap = (props: object) => <View testID="maplibre-map-mock" {...props} />;
+  return {
+    __esModule: true,
+    Map: MockMap,
+    Camera: () => null,
+    GeoJSONSource: ({ children }: { children?: unknown }) => <View>{children}</View>,
+    Layer: () => null,
+    Marker: ({ children }: { children?: unknown }) => <View>{children}</View>,
+    UserLocation: () => null,
+  };
+});
+
 import React from "react";
 import ReactTestRenderer from "react-test-renderer";
 import App from "../App";

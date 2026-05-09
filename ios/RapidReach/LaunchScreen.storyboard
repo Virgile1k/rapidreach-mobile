@@ -15,12 +15,9 @@
                         <rect key="frame" x="0.0" y="0.0" width="390" height="844"/>
                         <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                         <subviews>
-                            <label opaque="NO" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" text="+" textAlignment="center" lineBreakMode="clip" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="Dot-Mark">
-                                <rect key="frame" x="175" y="342" width="40" height="40"/>
-                                <fontDescription key="fontDescription" type="boldSystem" pointSize="56"/>
-                                <color key="textColor" red="0.89803921568627454" green="0.22352941176470589" blue="0.20784313725490197" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
-                                <nil key="highlightedColor"/>
-                            </label>
+                            <imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFit" horizontalHuggingPriority="251" verticalHuggingPriority="251" image="SplashEmblem" translatesAutoresizingMaskIntoConstraints="NO" id="Splash-Emblem">
+                                <rect key="frame" x="131" y="318" width="128" height="128"/>
+                            </imageView>
                             <label opaque="NO" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" text="RapidReach" textAlignment="center" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="Title-Lbl">
                                 <rect key="frame" x="32" y="430" width="326" height="34"/>
                                 <fontDescription key="fontDescription" type="boldSystem" pointSize="30"/>
@@ -37,11 +34,13 @@
                         <viewLayoutGuide key="safeArea" id="Bcu-3y-fUS"/>
                         <color key="backgroundColor" red="0.027450980392156862" green="0.050980392156862744" blue="0.094117647058823528" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
                         <constraints>
-                            <constraint firstItem="Dot-Mark" firstAttribute="centerX" secondItem="Ze5-6b-2t3" secondAttribute="centerX" id="cX-dot"/>
-                            <constraint firstItem="Dot-Mark" firstAttribute="centerY" secondItem="Ze5-6b-2t3" secondAttribute="centerY" constant="-52" id="cY-dot"/>
+                            <constraint firstItem="Splash-Emblem" firstAttribute="centerX" secondItem="Ze5-6b-2t3" secondAttribute="centerX" id="cX-dot"/>
+                            <constraint firstItem="Splash-Emblem" firstAttribute="centerY" secondItem="Ze5-6b-2t3" secondAttribute="centerY" constant="-52" id="cY-dot"/>
+                            <constraint firstItem="Splash-Emblem" firstAttribute="width" constant="128" id="W-emblem"/>
+                            <constraint firstItem="Splash-Emblem" firstAttribute="height" constant="128" id="H-emblem"/>
                             <constraint firstItem="Title-Lbl" firstAttribute="leading" secondItem="Bcu-3y-fUS" secondAttribute="leading" constant="24" id="L-title"/>
                             <constraint firstItem="Bcu-3y-fUS" firstAttribute="trailing" secondItem="Title-Lbl" secondAttribute="trailing" constant="24" id="R-title"/>
-                            <constraint firstItem="Title-Lbl" firstAttribute="top" secondItem="Dot-Mark" secondAttribute="bottom" constant="20" id="T-title"/>
+                            <constraint firstItem="Title-Lbl" firstAttribute="top" secondItem="Splash-Emblem" secondAttribute="bottom" constant="20" id="T-title"/>
                             <constraint firstItem="Sub-Lbl" firstAttribute="leading" secondItem="Bcu-3y-fUS" secondAttribute="leading" constant="24" id="L-sub"/>
                             <constraint firstItem="Bcu-3y-fUS" firstAttribute="trailing" secondItem="Sub-Lbl" secondAttribute="trailing" constant="24" id="R-sub"/>
                             <constraint firstItem="Sub-Lbl" firstAttribute="top" secondItem="Title-Lbl" secondAttribute="bottom" constant="8" id="T-sub"/>

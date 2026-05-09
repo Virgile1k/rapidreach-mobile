@@ -1,6 +1,6 @@
 import { API_BASE } from "./config";
 
-/** JWT rejected or expired — clients should clear stored session. */
+
 export class UnauthorizedError extends Error {
   constructor(message = "Session expired. Sign in again.") {
     super(message);
@@ -8,7 +8,7 @@ export class UnauthorizedError extends Error {
   }
 }
 
-/** Trim whitespace / accidental JSON quotes around tokens from storage or proxies. */
+
 export function normalizeBearerToken(raw: string): string {
   let t = raw.trim();
   if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'"))) {
@@ -60,6 +60,25 @@ export function decodeJwtExpMs(token: string): number | null {
     const json = JSON.parse(g.atob(payload)) as { exp?: unknown };
     if (typeof json.exp !== "number") return null;
     return json.exp * 1000;
+  } catch {
+    return null;
+  }
+}
+
+/** JWT `sub` (user id) — used to treat renewals as the same session without refetching profile. */
+export function decodeJwtSub(token: string): string | null {
+  try {
+    const parts = normalizeBearerToken(token).split(".");
+    if (parts.length < 2) return null;
+    let payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const pad = payload.length % 4;
+    if (pad === 2) payload += "==";
+    else if (pad === 3) payload += "=";
+    const g = globalThis as typeof globalThis & { atob?: (data: string) => string };
+    if (typeof g.atob !== "function") return null;
+    const json = JSON.parse(g.atob(payload)) as { sub?: unknown };
+    if (typeof json.sub !== "string" || !json.sub.trim()) return null;
+    return json.sub.trim();
   } catch {
     return null;
   }
@@ -398,6 +417,62 @@ export async function completeAssignment(token: string, assignmentId: string): P
     throw new Error(json.message?.trim() || "Could not complete assignment.");
   }
   return parseAssignment(json.data);
+}
+
+export type IncidentRoutePayload = {
+  id: string;
+  incidentId: string | null;
+  ambulanceId: string | null;
+  distanceKm: number | null;
+  etaMinutes: number | null;
+  provider: string | null;
+  routePolyline: string | null;
+  trafficLevel: string | null;
+  createdAt: string | null;
+};
+
+function parseIncidentRoutePayload(raw: Record<string, unknown>): IncidentRoutePayload {
+  return {
+    id: String(raw.id ?? ""),
+    incidentId: raw.incidentId != null ? String(raw.incidentId) : null,
+    ambulanceId: raw.ambulanceId != null ? String(raw.ambulanceId) : null,
+    distanceKm: typeof raw.distanceKm === "number" ? raw.distanceKm : null,
+    etaMinutes: typeof raw.etaMinutes === "number" ? raw.etaMinutes : null,
+    provider: raw.provider != null ? String(raw.provider) : null,
+    routePolyline: typeof raw.routePolyline === "string" ? raw.routePolyline : null,
+    trafficLevel: raw.trafficLevel != null ? String(raw.trafficLevel) : null,
+    createdAt: raw.createdAt != null ? String(raw.createdAt) : null,
+  };
+}
+
+/**
+ * Latest stored OSRM route for an incident when the responder has an open assignment (GET
+ * /api/dispatch/me/incidents/{id}/route). Returns null when there is no assignment, no route yet, or 404.
+ */
+export async function fetchMyIncidentRoute(
+  token: string,
+  incidentId: string,
+): Promise<IncidentRoutePayload | null> {
+  const res = await fetch(
+    `${API_BASE}/api/dispatch/me/incidents/${encodeURIComponent(incidentId)}/route`,
+    { headers: bearerHeaders(token) },
+  );
+  const text = await res.text();
+  let parsed: unknown;
+  try {
+    parsed = text.trim() ? JSON.parse(text) : {};
+  } catch {
+    throw new Error(`Invalid JSON from incident route (${res.status}).`);
+  }
+  const json = parsed as {
+    action?: number | string;
+    message?: string;
+    data?: Record<string, unknown>;
+  };
+  throwIfUnauthorized(res, json);
+  if (res.status === 404) return null;
+  if (!actionOk(json.action) || !json.data) return null;
+  return parseIncidentRoutePayload(json.data);
 }
 
 export async function updateResponderPosition(

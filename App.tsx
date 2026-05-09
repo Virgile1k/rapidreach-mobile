@@ -20,6 +20,7 @@ import {
   acceptAssignment,
   completeAssignment,
   decodeJwtExpMs,
+  decodeJwtSub,
   fetchEmergencyTypes,
   fetchMyAssignments,
   fetchMyResponder,
@@ -33,6 +34,7 @@ import {
   updateResponderPosition,
   type MyAssignment,
 } from "./src/api";
+import { IncidentRouteMap } from "./src/IncidentRouteMap";
 import { playIncidentAssignedFeedback } from "./src/playAlertFeedback";
 import { subscribeResponderAlerts, type IncidentAlertPayload } from "./src/realtime";
 import { API_BASE, FALLBACK_EMERGENCY_TYPE_ID, USE_LOCAL_BACKEND } from "./src/config";
@@ -81,7 +83,7 @@ function App() {
 function AppContent() {
   const insets = useSafeAreaInsets();
   const [mode, setMode] = useState<"citizen" | "responder">("citizen");
-  /** Lives in parent so switching Citizen ↔ Responder does not remount with empty token. */
+  
   const [responderToken, setResponderToken] = useState<string | null>(null);
   const [responderStorageHydrated, setResponderStorageHydrated] = useState(false);
 
@@ -134,7 +136,9 @@ function AppContent() {
       <ScrollView
         className="flex-1"
         keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}>
+        showsVerticalScrollIndicator={false}
+        nestedScrollEnabled={Platform.OS === "android"}
+        removeClippedSubviews={false}>
         <View className="gap-5 px-5 pb-12 pt-5">
           {mode === "citizen" ? (
             <CitizenPanel />
@@ -494,19 +498,29 @@ function ResponderPanel({
   const [assignmentsLoading, setAssignmentsLoading] = useState(false);
   const [assignmentError, setAssignmentError] = useState<string | null>(null);
   const [activeAssignmentActionId, setActiveAssignmentActionId] = useState<string | null>(null);
+  /** Wall-clock of last successful POST /session/renew — avoids tight renew loops. */
+  const lastRenewOkAtRef = useRef(0);
   const unsubRef = useRef<(() => void) | null>(null);
   const prevOpenAssignmentIdsRef = useRef<Set<string> | null>(null);
   const lastIncidentAlertSoundIdRef = useRef<string | null>(null);
+  /** Set after successful profile load; used to skip full session bootstrap on JWT renew (same `sub`). */
+  const responderSessionSubRef = useRef<string | null>(null);
   const tokenRef = useRef<string | null>(token);
   tokenRef.current = token;
+  const sessionPhaseRef = useRef(sessionPhase);
+  const responderIdRef = useRef(responderId);
+  sessionPhaseRef.current = sessionPhase;
+  responderIdRef.current = responderId;
 
   const sessionConnected = sessionPhase === "connected";
 
-  const refreshAssignments = useCallback(async () => {
-    if (!token || !sessionConnected || !responderId) return;
-    setAssignmentsLoading(true);
+  const refreshAssignments = useCallback(async (opts?: { silent?: boolean }) => {
+    const t = tokenRef.current;
+    if (!t || !sessionConnected || !responderId) return;
+    const silent = opts?.silent ?? false;
+    if (!silent) setAssignmentsLoading(true);
     try {
-      const list = await fetchMyAssignments(token);
+      const list = await fetchMyAssignments(t);
       const openIds = new Set(list.filter((a) => !a.completedAt).map((a) => a.assignmentId));
       const prev = prevOpenAssignmentIdsRef.current;
       if (prev !== null) {
@@ -530,15 +544,17 @@ function ResponderPanel({
       }
       setAssignmentError(e instanceof Error ? e.message : String(e));
     } finally {
-      setAssignmentsLoading(false);
+      if (!silent) setAssignmentsLoading(false);
     }
-  }, [token, sessionConnected, responderId]);
+  }, [sessionConnected, responderId]);
 
   const refreshAssignmentsRef = useRef(refreshAssignments);
   refreshAssignmentsRef.current = refreshAssignments;
 
   useEffect(() => {
     if (!token) {
+      responderSessionSubRef.current = null;
+      lastRenewOkAtRef.current = 0;
       setResponderId(null);
       setOrgId(null);
       setSessionPhase("idle");
@@ -549,6 +565,18 @@ function ResponderPanel({
       lastIncidentAlertSoundIdRef.current = null;
       return;
     }
+
+    const subject = decodeJwtSub(token);
+    if (
+      sessionRetryKey === 0 &&
+      subject != null &&
+      subject === responderSessionSubRef.current &&
+      sessionPhaseRef.current === "connected" &&
+      responderIdRef.current != null
+    ) {
+      return;
+    }
+
     let cancelled = false;
     setResponderId(null);
     setOrgId(null);
@@ -558,6 +586,7 @@ function ResponderPanel({
       try {
         const [profile, me] = await Promise.all([fetchProfile(token), fetchMyResponder(token)]);
         if (cancelled) return;
+        responderSessionSubRef.current = decodeJwtSub(token);
         setOrgId(profile.organizationId);
         setResponderId(me.id);
         setSessionPhase("connected");
@@ -567,6 +596,7 @@ function ResponderPanel({
       } catch (e) {
         if (cancelled) return;
         if (e instanceof UnauthorizedError) {
+          responderSessionSubRef.current = null;
           await AsyncStorage.removeItem(TOKEN_KEY);
           setToken(null);
           setSessionPhase("idle");
@@ -583,22 +613,29 @@ function ResponderPanel({
     };
   }, [token, sessionRetryKey, onResponderLoggedOut]);
 
-  /** Proactively renew JWT before expiry (server-controlled TTL via JWT_EXPIRATION / jwt.expiration). */
+  /** Proactively renew JWT before expiry. Uses {@link tokenRef} — do not depend on `token` or renew loops with REST. */
   useEffect(() => {
-    if (!token || !sessionConnected) return;
+    if (!sessionConnected) return;
     let cancelled = false;
-    /** Renew when less than this many ms remain on the access token. */
-    const RENEW_THRESHOLD_MS = 25 * 60 * 1000;
+    /**
+     * Renew only when this many ms remain (not 25min — short dev TTLs would always be “due” and hammer `/session/renew`).
+     * Long-lived tokens still renew comfortably before expiry.
+     */
+    const RENEW_WHEN_REMAINING_MS = 2 * 60 * 1000;
+    /** Minimum gap between successful renew calls (client-side safety net). */
+    const RENEW_COOLDOWN_MS = 45 * 1000;
 
     const maybeRenew = async () => {
       const t = tokenRef.current;
       if (!t || cancelled) return;
+      if (Date.now() - lastRenewOkAtRef.current < RENEW_COOLDOWN_MS) return;
       const exp = decodeJwtExpMs(t);
       if (exp == null) return;
-      if (exp - Date.now() > RENEW_THRESHOLD_MS) return;
+      if (exp - Date.now() > RENEW_WHEN_REMAINING_MS) return;
       try {
         const next = await renewResponderSession(t);
         if (cancelled) return;
+        lastRenewOkAtRef.current = Date.now();
         await AsyncStorage.setItem(TOKEN_KEY, next);
         setToken(next);
       } catch (e) {
@@ -617,22 +654,22 @@ function ResponderPanel({
       cancelled = true;
       clearInterval(id);
     };
-  }, [token, sessionConnected, setToken, onResponderLoggedOut]);
+  }, [sessionConnected, setToken, onResponderLoggedOut]);
 
   useEffect(() => {
     unsubRef.current?.();
     unsubRef.current = null;
-    if (!token || !responderId) return;
+    if (!tokenRef.current || !responderId) return;
     unsubRef.current = subscribeResponderAlerts(responderId, orgId, (payload) => {
       setLastAlert(payload);
     }, () => {
-      void refreshAssignmentsRef.current();
+      void refreshAssignmentsRef.current({ silent: true });
     });
     return () => {
       unsubRef.current?.();
       unsubRef.current = null;
     };
-  }, [token, responderId, orgId]);
+  }, [responderId, orgId]);
 
   /** Alert tone when a new incident message arrives over STOMP (assignment / proximity). */
   useEffect(() => {
@@ -646,38 +683,43 @@ function ResponderPanel({
   }, [lastAlert?.incidentId, lastAlert?.type, sessionConnected]);
 
   useEffect(() => {
-    if (!token || !sessionConnected || !responderId) return;
-    void refreshAssignments();
-    const interval = setInterval(() => void refreshAssignments(), 20000);
+    if (!sessionConnected || !responderId) return;
+    void refreshAssignments({ silent: true });
+    const interval = setInterval(() => void refreshAssignments({ silent: true }), 60000);
     return () => clearInterval(interval);
-  }, [token, responderId, sessionConnected, refreshAssignments]);
+  }, [responderId, sessionConnected, refreshAssignments]);
 
   useEffect(() => {
-    if (!token || !sessionConnected || !responderId || !lastAlert?.incidentId) return;
-    const t = setTimeout(() => void refreshAssignments(), 400);
+    if (!sessionConnected || !responderId || !lastAlert?.incidentId) return;
+    const t = setTimeout(() => void refreshAssignments({ silent: true }), 400);
     return () => clearTimeout(t);
-  }, [lastAlert?.incidentId, token, responderId, sessionConnected, refreshAssignments]);
+  }, [lastAlert?.incidentId, responderId, sessionConnected, refreshAssignments]);
 
   useEffect(() => {
-    if (!token || !sessionConnected) return;
+    if (!sessionConnected) return;
     const id = setInterval(() => {
+      const tok = tokenRef.current;
+      if (!tok) return;
       Geolocation.getCurrentPosition(
         (pos) => {
-          void updateResponderPosition(token, pos.coords.latitude, pos.coords.longitude).catch(() => {});
+          void updateResponderPosition(tok, pos.coords.latitude, pos.coords.longitude).catch(() => {});
         },
         () => {},
         { enableHighAccuracy: false, timeout: 12000, maximumAge: 30000 },
       );
     }, 45000);
-    Geolocation.getCurrentPosition(
-      (pos) => {
-        void updateResponderPosition(token, pos.coords.latitude, pos.coords.longitude).catch(() => {});
-      },
-      () => {},
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 },
-    );
+    const tok = tokenRef.current;
+    if (tok) {
+      Geolocation.getCurrentPosition(
+        (pos) => {
+          void updateResponderPosition(tok, pos.coords.latitude, pos.coords.longitude).catch(() => {});
+        },
+        () => {},
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 },
+      );
+    }
     return () => clearInterval(id);
-  }, [token, sessionConnected]);
+  }, [sessionConnected]);
 
   async function runAssignmentAction(
     kind: "accept" | "arrive" | "complete",
@@ -690,7 +732,7 @@ function ResponderPanel({
       if (kind === "accept") await acceptAssignment(token, assignmentId);
       else if (kind === "arrive") await markAssignmentArrived(token, assignmentId);
       else await completeAssignment(token, assignmentId);
-      await refreshAssignments();
+      await refreshAssignments({ silent: true });
     } catch (e) {
       if (e instanceof UnauthorizedError) {
         setAssignmentError(
@@ -721,6 +763,7 @@ function ResponderPanel({
 
   async function onLogout() {
     await AsyncStorage.removeItem(TOKEN_KEY);
+    responderSessionSubRef.current = null;
     setToken(null);
     setResponderId(null);
     setOrgId(null);
@@ -901,6 +944,19 @@ function ResponderPanel({
               {a.address ? (
                 <Text className="mt-2 text-[12px] leading-5 text-white/75">{a.address}</Text>
               ) : null}
+              {token && a.latitude != null && a.longitude != null ? (
+                <IncidentRouteMap
+                  token={token}
+                  incidentId={a.incidentId}
+                  incidentLatitude={a.latitude}
+                  incidentLongitude={a.longitude}
+                  titleHint={a.referenceNo ?? a.incidentId.slice(0, 12)}
+                />
+              ) : (
+                <Text className="mt-2 text-[11px] leading-4 text-white/45">
+                  Scene GPS not attached to this incident yet — map appears when coordinates are available.
+                </Text>
+              )}
               <AssignmentActionButtons
                 assignment={a}
                 busy={activeAssignmentActionId === a.assignmentId}
@@ -933,6 +989,18 @@ function ResponderPanel({
             ) : null}
             {lastAlert.address ? (
               <Text className="mt-2 text-[12px] leading-5 text-white/80">{lastAlert.address}</Text>
+            ) : null}
+            {token &&
+            lastAlert.incidentLatitude != null &&
+            lastAlert.incidentLongitude != null &&
+            lastAlert.incidentId ? (
+              <IncidentRouteMap
+                token={token}
+                incidentId={lastAlert.incidentId}
+                incidentLatitude={lastAlert.incidentLatitude}
+                incidentLongitude={lastAlert.incidentLongitude}
+                titleHint={lastAlert.referenceNo ?? lastAlert.incidentId.slice(0, 12)}
+              />
             ) : null}
             {alertAssignment ? (
               <AssignmentActionButtons
