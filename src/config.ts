@@ -16,7 +16,7 @@ function resolveDevApiBase(): string {
     return `http://${host}:${DEV_PORT}`;
   }
   if (Platform.OS === "android") {
-    return `http:
+    return `http://10.0.2.2:${DEV_PORT}`;
   }
   return `http://localhost:${DEV_PORT}`;
 }
