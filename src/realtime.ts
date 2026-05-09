@@ -112,6 +112,9 @@ export function subscribeResponderAlerts(
 
   let inboundSerial = Promise.resolve();
 
+  /** Previous AppState — avoid closing a healthy socket on duplicate/spurious "active" events (causes reconnect storms). */
+  let appStatePrev = AppState.currentState;
+
   const connect = () => {
     if (stopped) return;
     clearReconnectTimer();
@@ -172,7 +175,12 @@ export function subscribeResponderAlerts(
   };
 
   const onAppState = (next: AppStateStatus) => {
+    const prev = appStatePrev;
+    appStatePrev = next;
     if (stopped || next !== "active") return;
+    // Only cycle the socket when returning from background/inactive — not on cold start (unknown→active)
+    // or duplicate "active" while already foregrounded.
+    if (prev !== "background" && prev !== "inactive") return;
     try {
       ws?.close();
     } catch {

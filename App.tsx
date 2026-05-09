@@ -534,6 +534,9 @@ function ResponderPanel({
     }
   }, [token, sessionConnected, responderId]);
 
+  const refreshAssignmentsRef = useRef(refreshAssignments);
+  refreshAssignmentsRef.current = refreshAssignments;
+
   useEffect(() => {
     if (!token) {
       setResponderId(null);
@@ -623,13 +626,13 @@ function ResponderPanel({
     unsubRef.current = subscribeResponderAlerts(responderId, orgId, (payload) => {
       setLastAlert(payload);
     }, () => {
-      void refreshAssignments();
+      void refreshAssignmentsRef.current();
     });
     return () => {
       unsubRef.current?.();
       unsubRef.current = null;
     };
-  }, [token, responderId, orgId, refreshAssignments]);
+  }, [token, responderId, orgId]);
 
   /** Alert tone when a new incident message arrives over STOMP (assignment / proximity). */
   useEffect(() => {
