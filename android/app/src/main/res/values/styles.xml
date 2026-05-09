@@ -2,7 +2,7 @@
 
     <!-- Base application theme. -->
     <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
-        <!-- Native splash: Telkom hero (matches iOS launch screen). -->
+        <!-- Native splash: RapidReach gradient + emblem (see drawable/launch_splash.xml). -->
         <item name="android:windowBackground">@drawable/launch_splash</item>
         <item name="android:editTextBackground">@drawable/rn_edit_text_material</item>
     </style>

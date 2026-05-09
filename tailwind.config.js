@@ -5,28 +5,27 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        /** Emergency — SOS, critical alerts, active emergencies */
+        /** Emergency — SOS, critical alerts */
         emergency: '#E53935',
-        /** Trust — headers, navigation, dispatcher surfaces */
         trust: '#1565C0',
-        /** Resolved, safe states, positive feedback */
         success: '#2E7D32',
-        /** Pending, delayed, weak signal */
         warning: '#F9A825',
+        /** Splash / header navy */
+        brand: {
+          navy: '#070D18',
+          slate: '#0c1526',
+          mist: '#94a3b8',
+        },
         neutral: {
-          /** Dark mode base */
-          dark: '#121212',
-          /** Cards on dark */
-          card: '#1E1E1E',
+          dark: '#080e18',
+          card: '#111827',
+          elevated: '#1e293b',
         },
         surface: {
-          /** Light mode app background */
           light: '#F5F7FA',
         },
         content: {
-          /** Primary text (light surfaces) */
           primary: '#212121',
-          /** Secondary / muted text */
           secondary: '#616161',
         },
       },
