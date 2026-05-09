@@ -19,6 +19,7 @@ import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-cont
 import {
   acceptAssignment,
   completeAssignment,
+  decodeJwtExpMs,
   fetchEmergencyTypes,
   fetchMyAssignments,
   fetchMyResponder,
@@ -27,6 +28,7 @@ import {
   markAssignmentArrived,
   normalizeBearerToken,
   postSosIntake,
+  renewResponderSession,
   UnauthorizedError,
   updateResponderPosition,
   type MyAssignment,
@@ -495,6 +497,8 @@ function ResponderPanel({
   const unsubRef = useRef<(() => void) | null>(null);
   const prevOpenAssignmentIdsRef = useRef<Set<string> | null>(null);
   const lastIncidentAlertSoundIdRef = useRef<string | null>(null);
+  const tokenRef = useRef<string | null>(token);
+  tokenRef.current = token;
 
   const sessionConnected = sessionPhase === "connected";
 
@@ -576,32 +580,72 @@ function ResponderPanel({
     };
   }, [token, sessionRetryKey, onResponderLoggedOut]);
 
+  /** Proactively renew JWT before expiry (server-controlled TTL via JWT_EXPIRATION / jwt.expiration). */
+  useEffect(() => {
+    if (!token || !sessionConnected) return;
+    let cancelled = false;
+    /** Renew when less than this many ms remain on the access token. */
+    const RENEW_THRESHOLD_MS = 25 * 60 * 1000;
+
+    const maybeRenew = async () => {
+      const t = tokenRef.current;
+      if (!t || cancelled) return;
+      const exp = decodeJwtExpMs(t);
+      if (exp == null) return;
+      if (exp - Date.now() > RENEW_THRESHOLD_MS) return;
+      try {
+        const next = await renewResponderSession(t);
+        if (cancelled) return;
+        await AsyncStorage.setItem(TOKEN_KEY, next);
+        setToken(next);
+      } catch (e) {
+        if (cancelled) return;
+        if (e instanceof UnauthorizedError) {
+          await AsyncStorage.removeItem(TOKEN_KEY);
+          setToken(null);
+          onResponderLoggedOut?.();
+        }
+      }
+    };
+
+    void maybeRenew();
+    const id = setInterval(() => void maybeRenew(), 5 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [token, sessionConnected, setToken, onResponderLoggedOut]);
+
   useEffect(() => {
     unsubRef.current?.();
     unsubRef.current = null;
     if (!token || !responderId) return;
     unsubRef.current = subscribeResponderAlerts(responderId, orgId, (payload) => {
       setLastAlert(payload);
+    }, () => {
+      void refreshAssignments();
     });
     return () => {
       unsubRef.current?.();
       unsubRef.current = null;
     };
-  }, [token, responderId, orgId]);
+  }, [token, responderId, orgId, refreshAssignments]);
 
   /** Alert tone when a new incident message arrives over STOMP (assignment / proximity). */
   useEffect(() => {
     if (!sessionConnected || !lastAlert?.incidentId) return;
     const id = lastAlert.incidentId;
-    if (lastIncidentAlertSoundIdRef.current === id) return;
-    lastIncidentAlertSoundIdRef.current = id;
+    const kind = lastAlert.type ?? "";
+    const dedupeKey = `${kind}:${id}`;
+    if (lastIncidentAlertSoundIdRef.current === dedupeKey) return;
+    lastIncidentAlertSoundIdRef.current = dedupeKey;
     playIncidentAssignedFeedback();
-  }, [lastAlert?.incidentId, sessionConnected]);
+  }, [lastAlert?.incidentId, lastAlert?.type, sessionConnected]);
 
   useEffect(() => {
     if (!token || !sessionConnected || !responderId) return;
     void refreshAssignments();
-    const interval = setInterval(() => void refreshAssignments(), 60000);
+    const interval = setInterval(() => void refreshAssignments(), 20000);
     return () => clearInterval(interval);
   }, [token, responderId, sessionConnected, refreshAssignments]);
 

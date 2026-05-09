@@ -47,6 +47,54 @@ export type LoginResult = {
   isResponder: true;
 };
 
+export function decodeJwtExpMs(token: string): number | null {
+  try {
+    const parts = normalizeBearerToken(token).split(".");
+    if (parts.length < 2) return null;
+    let payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const pad = payload.length % 4;
+    if (pad === 2) payload += "==";
+    else if (pad === 3) payload += "=";
+    const g = globalThis as typeof globalThis & { atob?: (data: string) => string };
+    if (typeof g.atob !== "function") return null;
+    const json = JSON.parse(g.atob(payload)) as { exp?: unknown };
+    if (typeof json.exp !== "number") return null;
+    return json.exp * 1000;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Extends responder session with a new JWT (same rules as login). Call only while the current token is still valid.
+ */
+export async function renewResponderSession(token: string): Promise<string> {
+  const res = await fetch(`${API_BASE}/api/dispatch/me/session/renew`, {
+    method: "POST",
+    headers: bearerHeaders(token),
+  });
+  const json = (await res.json()) as {
+    action?: number | string;
+    message?: string;
+    data?: {
+      accessToken?: string;
+      token?: string;
+    };
+  };
+  throwIfUnauthorized(res, json);
+  const accessToken =
+    typeof json.data?.accessToken === "string" && json.data.accessToken.length > 0
+      ? json.data.accessToken
+      : typeof json.data?.token === "string" && json.data.token.length > 0
+        ? json.data.token
+        : undefined;
+  const actionOk = json.action === 1 || json.action === "1";
+  if (!res.ok || !actionOk || !accessToken) {
+    throw new Error(json.message?.trim() || "Could not renew session.");
+  }
+  return normalizeBearerToken(accessToken);
+}
+
 /**
  * Responder mobile sign-in — calls POST /api/auth/login/responder (rejects non-responder accounts).
  */

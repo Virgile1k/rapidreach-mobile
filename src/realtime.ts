@@ -17,9 +17,17 @@ export type IncidentAlertPayload = {
 
 type Handler = (payload: IncidentAlertPayload) => void;
 
-function decodeWsPayload(data: unknown): string {
+function decodeWsPayloadSync(data: unknown): string {
   if (typeof data === "string") return data;
   if (data instanceof ArrayBuffer) return new TextDecoder().decode(data);
+  if (ArrayBuffer.isView(data)) return new TextDecoder().decode(data);
+  return "";
+}
+
+async function decodeWsPayloadAsync(data: unknown): Promise<string> {
+  const sync = decodeWsPayloadSync(data);
+  if (sync.length > 0) return sync;
+  if (typeof Blob !== "undefined" && data instanceof Blob) return data.text();
   return "";
 }
 
@@ -28,6 +36,7 @@ export function subscribeResponderAlerts(
   responderId: string,
   organizationId: string | null,
   onMessage: Handler,
+  onConnected?: () => void,
 ): () => void {
   let ws: WebSocket | null = null;
   let stopped = false;
@@ -64,6 +73,7 @@ export function subscribeResponderAlerts(
     const trimmed = frame.replace(/\r\n/g, "\n");
     if (trimmed.startsWith("CONNECTED")) {
       subscribeTopics(ws!);
+      onConnected?.();
       return;
     }
     if (!trimmed.startsWith("MESSAGE")) return;
@@ -100,6 +110,8 @@ export function subscribeResponderAlerts(
     }
   };
 
+  let inboundSerial = Promise.resolve();
+
   const connect = () => {
     if (stopped) return;
     clearReconnectTimer();
@@ -111,6 +123,7 @@ export function subscribeResponderAlerts(
         httpUrl.pathname && httpUrl.pathname !== "/" ? httpUrl.pathname.replace(/\/$/, "") : "";
       const wsUrl = `${wsScheme}//${httpUrl.host}${basePath}/ws`;
       ws = new WebSocket(wsUrl, ["v12.stomp"]);
+      ws.binaryType = "arraybuffer";
 
       ws.onopen = () => {
         attempt = 0;
@@ -118,23 +131,27 @@ export function subscribeResponderAlerts(
       };
 
       ws.onmessage = (event) => {
-        let chunk = decodeWsPayload(event.data);
-        if (!chunk.length) return;
+        inboundSerial = inboundSerial
+          .then(async () => {
+            let chunk = await decodeWsPayloadAsync(event.data);
+            if (!chunk.length) return;
 
-        // Lone STOMP heart-beat from broker
-        if (chunk === "\n") {
-          ws?.send("\n");
-          return;
-        }
+            // Lone STOMP heart-beat from broker
+            if (chunk === "\n") {
+              ws?.send("\n");
+              return;
+            }
 
-        const socket = ws;
-        if (!socket) return;
+            const socket = ws;
+            if (!socket) return;
 
-        chunk = consumeHeartbeats(socket, chunk);
-        if (!chunk.length) return;
+            chunk = consumeHeartbeats(socket, chunk);
+            if (!chunk.length) return;
 
-        receiveBuffer += chunk;
-        flushNullDelimitedFrames();
+            receiveBuffer += chunk;
+            flushNullDelimitedFrames();
+          })
+          .catch(() => {});
       };
 
       ws.onerror = () => {
