@@ -35,6 +35,7 @@ import {
   type MyAssignment,
 } from "./src/api";
 import { IncidentRouteMap } from "./src/IncidentRouteMap";
+import { LiveIncidentSession } from "./src/LiveIncidentSession";
 import { playIncidentAssignedFeedback } from "./src/playAlertFeedback";
 import { subscribeResponderAlerts, type IncidentAlertPayload } from "./src/realtime";
 import { API_BASE, FALLBACK_EMERGENCY_TYPE_ID, USE_LOCAL_BACKEND } from "./src/config";
@@ -184,6 +185,12 @@ function CitizenPanel() {
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [bootstrapError, setBootstrapError] = useState<string | null>(null);
+  const [liveSession, setLiveSession] = useState<{
+    incidentId: string;
+    referenceNo: string | null;
+    status: string | null;
+    citizenSessionToken: string;
+  } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -250,9 +257,19 @@ function CitizenPanel() {
       }
 
       const res = await postSosIntake(body);
-      setResult(
-        `Help requested · ${res.referenceNo ?? res.incidentId.slice(0, 8)} (${res.status ?? "ok"})`,
-      );
+      if (res.citizenSessionToken) {
+        setLiveSession({
+          incidentId: res.incidentId,
+          referenceNo: res.referenceNo,
+          status: res.status,
+          citizenSessionToken: res.citizenSessionToken,
+        });
+        setResult(null);
+      } else {
+        setResult(
+          `Help requested · ${res.referenceNo ?? res.incidentId.slice(0, 8)} (${res.status ?? "ok"}). Live session token missing — update the backend.`,
+        );
+      }
     } catch (e) {
       setResult(e instanceof Error ? e.message : "Something went wrong.");
     } finally {
@@ -261,6 +278,18 @@ function CitizenPanel() {
   }
 
   const ok = result?.startsWith("Help requested");
+
+  if (liveSession) {
+    return (
+      <LiveIncidentSession
+        incidentId={liveSession.incidentId}
+        referenceNo={liveSession.referenceNo}
+        initialStatus={liveSession.status}
+        citizenSessionToken={liveSession.citizenSessionToken}
+        onEndSession={() => setLiveSession(null)}
+      />
+    );
+  }
 
   return (
     <View className="gap-5">

@@ -232,7 +232,113 @@ export type SosIntakeResult = {
   incidentId: string;
   referenceNo: string | null;
   status: string | null;
+  /** Present when backend supports citizen live session (X-Citizen-Session). */
+  citizenSessionToken: string | null;
 };
+
+const CITIZEN_SESSION_HEADER = "X-Citizen-Session";
+
+export type CitizenSessionSummary = {
+  incidentId: string;
+  referenceNo: string | null;
+  status: string | null;
+  deviceReachable: boolean | null;
+  deviceStatus: string | null;
+};
+
+export async function fetchCitizenSessionSummary(
+  incidentId: string,
+  sessionToken: string,
+): Promise<CitizenSessionSummary> {
+  const res = await fetch(
+    `${API_BASE}/api/emergency/incidents/${encodeURIComponent(incidentId)}/citizen-session/summary`,
+    {
+      headers: {
+        Accept: "application/json",
+        [CITIZEN_SESSION_HEADER]: sessionToken,
+        "User-Agent": "RapidReach-Mobile/1.0",
+      },
+    },
+  );
+  const json = (await res.json()) as {
+    incidentId?: string;
+    referenceNo?: string | null;
+    status?: string | null;
+    deviceReachable?: boolean | null;
+    deviceStatus?: string | null;
+    message?: string;
+  };
+  if (!res.ok || !json.incidentId) {
+    throw new Error(json.message?.trim() || "Could not load session summary.");
+  }
+  return {
+    incidentId: String(json.incidentId),
+    referenceNo: json.referenceNo ?? null,
+    status: json.status ?? null,
+    deviceReachable: json.deviceReachable ?? null,
+    deviceStatus: json.deviceStatus ?? null,
+  };
+}
+
+export async function postCitizenSessionLocation(
+  incidentId: string,
+  sessionToken: string,
+  latitude: number,
+  longitude: number,
+): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/api/emergency/incidents/${encodeURIComponent(incidentId)}/citizen-session/location`,
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        [CITIZEN_SESSION_HEADER]: sessionToken,
+        "User-Agent": "RapidReach-Mobile/1.0",
+      },
+      body: JSON.stringify({ latitude, longitude }),
+    },
+  );
+  if (!res.ok) {
+    const json = (await res.json().catch(() => ({}))) as { message?: string };
+    throw new Error(json.message?.trim() || "Could not share location.");
+  }
+}
+
+export async function postCitizenSessionMarkSafe(incidentId: string, sessionToken: string): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/api/emergency/incidents/${encodeURIComponent(incidentId)}/citizen-session/mark-safe`,
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        [CITIZEN_SESSION_HEADER]: sessionToken,
+        "User-Agent": "RapidReach-Mobile/1.0",
+      },
+    },
+  );
+  if (!res.ok) {
+    const json = (await res.json().catch(() => ({}))) as { message?: string };
+    throw new Error(json.message?.trim() || "Could not record status.");
+  }
+}
+
+export async function postCitizenSessionHeartbeat(incidentId: string, sessionToken: string): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/api/emergency/incidents/${encodeURIComponent(incidentId)}/citizen-session/heartbeat`,
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        [CITIZEN_SESSION_HEADER]: sessionToken,
+        "User-Agent": "RapidReach-Mobile/1.0",
+      },
+    },
+  );
+  if (!res.ok) {
+    throw new Error(`Heartbeat failed (${res.status}).`);
+  }
+}
 
 export async function postSosIntake(body: {
   emergencyTypeId: string;
@@ -258,15 +364,21 @@ export async function postSosIntake(body: {
     incidentId?: string;
     referenceNo?: string | null;
     status?: string | null;
+    citizenSessionToken?: string | null;
     message?: string;
   };
   if (!res.ok || !json.incidentId) {
     throw new Error(json.message?.trim() || "SOS intake failed.");
   }
+  const tok =
+    json.citizenSessionToken != null && String(json.citizenSessionToken).trim()
+      ? String(json.citizenSessionToken).trim()
+      : null;
   return {
     incidentId: String(json.incidentId),
     referenceNo: json.referenceNo ?? null,
     status: json.status ?? null,
+    citizenSessionToken: tok,
   };
 }
 

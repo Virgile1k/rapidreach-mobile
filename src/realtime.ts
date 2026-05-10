@@ -15,7 +15,21 @@ export type IncidentAlertPayload = {
   organizationId?: string | null;
 };
 
-type Handler = (payload: IncidentAlertPayload) => void;
+/** Payload shape for `/topic/incidents/{id}` (shared with dashboard realtime). */
+export type IncidentTopicPayload = {
+  type?: string;
+  incidentId?: string;
+  status?: string;
+  message?: string;
+};
+
+function buildWsUrl(apiBase: string): string {
+  const httpUrl = new URL(apiBase);
+  const wsScheme = httpUrl.protocol === "https:" ? "wss:" : "ws:";
+  const basePath =
+    httpUrl.pathname && httpUrl.pathname !== "/" ? httpUrl.pathname.replace(/\/$/, "") : "";
+  return `${wsScheme}//${httpUrl.host}${basePath}/ws`;
+}
 
 function decodeWsPayloadSync(data: unknown): string {
   if (typeof data === "string") return data;
@@ -31,12 +45,10 @@ async function decodeWsPayloadAsync(data: unknown): Promise<string> {
   return "";
 }
 
-
-export function subscribeResponderAlerts(
-  responderId: string,
-  organizationId: string | null,
-  onMessage: Handler,
-  onConnected?: () => void,
+function connectStomp(
+  apiBase: string,
+  subscribeTopics: (socket: WebSocket) => void,
+  onJsonBody: (parsed: unknown) => void,
 ): () => void {
   let ws: WebSocket | null = null;
   let stopped = false;
@@ -60,20 +72,10 @@ export function subscribeResponderAlerts(
     reconnectTimer = setTimeout(connect, delay);
   };
 
-  const subscribeTopics = (socket: WebSocket) => {
-    if (organizationId) {
-      socket.send(
-        `SUBSCRIBE\nid:sub-org\ndestination:/topic/organizations/${organizationId}/incidents\n\n\u0000`,
-      );
-    }
-    socket.send(`SUBSCRIBE\nid:sub-res\ndestination:/topic/responders/${responderId}\n\n\u0000`);
-  };
-
   const processFrame = (frame: string) => {
     const trimmed = frame.replace(/\r\n/g, "\n");
     if (trimmed.startsWith("CONNECTED")) {
       subscribeTopics(ws!);
-      onConnected?.();
       return;
     }
     if (!trimmed.startsWith("MESSAGE")) return;
@@ -82,8 +84,7 @@ export function subscribeResponderAlerts(
     const body = trimmed.slice(bodyIdx + 2).trim();
     if (!body) return;
     try {
-      const parsed = JSON.parse(body) as IncidentAlertPayload;
-      onMessage(parsed);
+      onJsonBody(JSON.parse(body));
     } catch {
       // ignore non-JSON
     }
@@ -111,8 +112,6 @@ export function subscribeResponderAlerts(
   };
 
   let inboundSerial = Promise.resolve();
-
-  /** Previous AppState — avoid closing a healthy socket on duplicate/spurious "active" events (causes reconnect storms). */
   let appStatePrev = AppState.currentState;
 
   const connect = () => {
@@ -120,11 +119,7 @@ export function subscribeResponderAlerts(
     clearReconnectTimer();
     receiveBuffer = "";
     try {
-      const httpUrl = new URL(API_BASE);
-      const wsScheme = httpUrl.protocol === "https:" ? "wss:" : "ws:";
-      const basePath =
-        httpUrl.pathname && httpUrl.pathname !== "/" ? httpUrl.pathname.replace(/\/$/, "") : "";
-      const wsUrl = `${wsScheme}
+      const wsUrl = buildWsUrl(apiBase);
       ws = new WebSocket(wsUrl, ["v12.stomp"]);
       ws.binaryType = "arraybuffer";
 
@@ -139,7 +134,6 @@ export function subscribeResponderAlerts(
             let chunk = await decodeWsPayloadAsync(event.data);
             if (!chunk.length) return;
 
-            
             if (chunk === "\n") {
               ws?.send("\n");
               return;
@@ -161,7 +155,7 @@ export function subscribeResponderAlerts(
         try {
           ws?.close();
         } catch {
-          
+          /* noop */
         }
       };
 
@@ -178,13 +172,12 @@ export function subscribeResponderAlerts(
     const prev = appStatePrev;
     appStatePrev = next;
     if (stopped || next !== "active") return;
-    
-    
+
     if (prev !== "background" && prev !== "inactive") return;
     try {
       ws?.close();
     } catch {
-      
+      /* noop */
     }
   };
 
@@ -199,8 +192,48 @@ export function subscribeResponderAlerts(
     try {
       ws?.close();
     } catch {
-      
+      /* noop */
     }
     ws = null;
   };
+}
+
+export function subscribeResponderAlerts(
+  responderId: string,
+  organizationId: string | null,
+  onMessage: (payload: IncidentAlertPayload) => void,
+  onConnected?: () => void,
+): () => void {
+  return connectStomp(
+    API_BASE,
+    (socket) => {
+      if (organizationId) {
+        socket.send(
+          `SUBSCRIBE\nid:sub-org\ndestination:/topic/organizations/${organizationId}/incidents\n\n\u0000`,
+        );
+      }
+      socket.send(`SUBSCRIBE\nid:sub-res\ndestination:/topic/responders/${responderId}\n\n\u0000`);
+      onConnected?.();
+    },
+    (parsed) => onMessage(parsed as IncidentAlertPayload),
+  );
+}
+
+/** Citizen live session: dispatcher messages and acks on the incident topic. */
+export function subscribeCitizenIncidentSession(
+  incidentId: string,
+  onMessage: (payload: IncidentTopicPayload) => void,
+  onConnected?: () => void,
+): () => void {
+  const safeId = encodeURIComponent(incidentId);
+  return connectStomp(
+    API_BASE,
+    (socket) => {
+      socket.send(
+        `SUBSCRIBE\nid:sub-cit-${safeId.slice(0, 24)}\ndestination:/topic/incidents/${incidentId}\n\n\u0000`,
+      );
+      onConnected?.();
+    },
+    (parsed) => onMessage(parsed as IncidentTopicPayload),
+  );
 }
