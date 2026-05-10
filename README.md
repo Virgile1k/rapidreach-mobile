@@ -16,6 +16,19 @@ The app calls the RapidReach REST API. Base URL is set in **`src/config.ts`**:
 
 **Example hosted API:** [https://rapidreachbn.nexvsoft.com/](https://rapidreachbn.nexvsoft.com/)
 
+## Emergency calling (real incidents)
+
+The app may guide or simulate workflows; it does **not** replace dialing emergency services. For immediate danger, call your **local** emergency number (e.g. **112**, **911**, or **999** depending on country).
+
+## Demo / test users (local or seeded backend)
+
+Use these only when your API exposes the same accounts:
+
+| Role | Email | Password |
+|------|--------|----------|
+| Super admin | `admin@rapidreach.com` | `password` |
+| Responder (mobile responder experience) | `responder@rapidreach.com` | `password` |
+
 ## Requirements
 
 - **Node.js ≥ 20**

@@ -10,7 +10,7 @@ import {
   type CitizenSessionSummary,
 } from "./api";
 import { subscribeCitizenIncidentSession, type IncidentTopicPayload } from "./realtime";
-import { speakCitizenSessionLine } from "./speakCitizenSession";
+import { prepareCitizenTts, speakCitizenSessionLine } from "./speakCitizenSession";
 
 function formatElapsed(totalSeconds: number): string {
   const m = Math.floor(totalSeconds / 60);
@@ -74,6 +74,12 @@ export function LiveIncidentSession({
   }, [refreshSummary]);
 
   useEffect(() => {
+    void prepareCitizenTts().catch(() => {
+      /* Engine missing — UI text still works; avoid crashing session */
+    });
+  }, []);
+
+  useEffect(() => {
     const hb = setInterval(() => {
       void postCitizenSessionHeartbeat(incidentId, tokenRef.current).catch(() => {});
     }, 45000);
@@ -84,7 +90,7 @@ export function LiveIncidentSession({
     const unsub = subscribeCitizenIncidentSession(
       incidentId,
       (payload: IncidentTopicPayload) => {
-        const t = payload.type;
+        const t = typeof payload.type === "string" ? payload.type.trim() : "";
         if ((t === "INCIDENT_UPDATED" || t === "INCIDENT_INTAKE") && payload.status) {
           setStatusLine(payload.status);
         }

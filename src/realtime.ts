@@ -45,6 +45,25 @@ async function decodeWsPayloadAsync(data: unknown): Promise<string> {
   return "";
 }
 
+/** STOMP MESSAGE bodies should be JSON; tolerate stray framing around the object. */
+function parseIncidentTopicJson(body: string): unknown | null {
+  const trimmed = body.trim();
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    const start = trimmed.indexOf("{");
+    const end = trimmed.lastIndexOf("}");
+    if (start >= 0 && end > start) {
+      try {
+        return JSON.parse(trimmed.slice(start, end + 1));
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+}
+
 function connectStomp(
   apiBase: string,
   subscribeTopics: (socket: WebSocket) => void,
@@ -84,7 +103,10 @@ function connectStomp(
     const body = trimmed.slice(bodyIdx + 2).trim();
     if (!body) return;
     try {
-      onJsonBody(JSON.parse(body));
+      const parsed = parseIncidentTopicJson(body);
+      if (parsed != null) {
+        onJsonBody(parsed);
+      }
     } catch {
       // ignore non-JSON
     }
